@@ -168,7 +168,7 @@ def render_gallery_content(key_prefix="gallery"):
     for i, sub in enumerate(approved):
         with cols[i % 3]:
             if sub.get("watermarked_url"):
-                st.image(sub["watermarked_url"], use_container_width=True)
+                st.image(sub["watermarked_url"], width="stretch")
             st.caption(f"👤 {sub.get('username', 'unknown')} · {sub.get('method', '')}")
 
 
@@ -751,7 +751,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    if st.button("🚪 Log Out", use_container_width=True):
+    if st.button("🚪 Log Out", width="stretch"):
         auth.log_activity(st.session_state["username"], "logout")
         for key in ("authenticated", "username", "role"):
             st.session_state.pop(key, None)
@@ -2101,7 +2101,7 @@ if _is_admin and tab4 is not None:
                         col_img, col_info = st.columns([1, 2])
                         with col_img:
                             if sub.get("watermarked_url"):
-                                st.image(sub["watermarked_url"], use_container_width=True)
+                                st.image(sub["watermarked_url"], width="stretch")
                         with col_info:
                             st.markdown(f"**Submitted by:** {sub.get('username')}")
                             st.markdown(f"**Method:** {sub.get('method')}")
@@ -2182,10 +2182,10 @@ if _is_admin and tab4 is not None:
                                     vcol1, vcol2 = st.columns(2)
                                     with vcol1:
                                         st.caption("Reference watermark")
-                                        st.image(vr["wm_ref"], clamp=True, use_container_width=True)
+                                        st.image(vr["wm_ref"], clamp=True, width="stretch")
                                     with vcol2:
                                         st.caption("Extracted from submission")
-                                        st.image(vr["extracted"], clamp=True, use_container_width=True)
+                                        st.image(vr["extracted"], clamp=True, width="stretch")
                                     mcol1, mcol2 = st.columns(2)
                                     with mcol1:
                                         st.metric("Normalized Correlation (NC)", f"{vr['nc']:.4f}")
