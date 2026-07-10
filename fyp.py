@@ -8,6 +8,9 @@ import io
 from datetime import datetime
 import math
 import auth
+import exhibitions
+import requests
+import pickle
 
 # Page configuration
 st.set_page_config(
@@ -17,6 +20,60 @@ st.set_page_config(
 )
 
 auth.init_db()
+
+# =============================================================================
+# Public Gallery (viewable without logging in)
+# =============================================================================
+def render_gallery_content(key_prefix="gallery"):
+    events = exhibitions.get_events()
+    if not events:
+        st.info("No exhibitions have been created yet. Check back soon!")
+        return
+
+    event_titles = {e["id"]: e["title"] for e in events}
+    selected_event_id = st.selectbox(
+        "Choose an exhibition",
+        options=list(event_titles.keys()),
+        format_func=lambda eid: event_titles[eid],
+        key=f"{key_prefix}_event_select",
+    )
+    event = exhibitions.get_event(selected_event_id)
+    if event:
+        st.markdown(f"**{event['title']}**")
+        if event.get("description"):
+            st.caption(event["description"])
+        st.caption(f"📅 {event.get('start_date', '')} → {event.get('end_date', '')}")
+
+    approved = exhibitions.get_gallery(event_id=selected_event_id)
+    st.markdown(f"**{len(approved)} approved image(s)**")
+
+    if not approved:
+        st.info("No approved images in this exhibition yet.")
+        return
+
+    cols = st.columns(3)
+    for i, sub in enumerate(approved):
+        with cols[i % 3]:
+            if sub.get("watermarked_url"):
+                st.image(sub["watermarked_url"], use_container_width=True)
+            st.caption(f"👤 {sub.get('username', 'unknown')} · {sub.get('method', '')}")
+
+
+def render_public_gallery():
+    st.title("🎨 Exhibition Gallery")
+    st.markdown("### Watermark-verified images approved for public display")
+
+    if st.button("← Back to Log In"):
+        st.session_state["view_mode"] = None
+        st.rerun()
+
+    render_gallery_content(key_prefix="public_gallery")
+
+
+if st.session_state.get("view_mode") == "public_gallery":
+    render_public_gallery()
+    st.stop()
+
 
 # =============================================================================
 # Authentication Gate
@@ -64,6 +121,11 @@ def render_login_page():
         f"🛠️ Default admin login: **{auth.DEFAULT_ADMIN_USERNAME} / {auth.DEFAULT_ADMIN_PASSWORD}** "
         "— please change this password after your first login (sidebar → Change my password)."
     )
+
+    st.markdown("---")
+    if st.button("🎨 Browse Public Exhibition Gallery (no account needed)"):
+        st.session_state["view_mode"] = "public_gallery"
+        st.rerun()
 
 
 if not st.session_state.get("authenticated"):
@@ -559,14 +621,14 @@ with st.sidebar:
         st.info("📷 Non-blind: Requires original image for extraction")
 
 # Main tabs
-_tab_labels = ["📝 Embed Watermark", "🔍 Extract Watermark", "⚔️ Attack Testing"]
+_tab_labels = ["📝 Embed Watermark", "🔍 Extract Watermark", "⚔️ Attack Testing", "🎨 Gallery"]
 _is_admin = st.session_state.get("role") == "admin"
 if _is_admin:
     _tab_labels.append("🛡️ Admin Panel")
 
 _tabs = st.tabs(_tab_labels)
-tab1, tab2, tab3 = _tabs[0], _tabs[1], _tabs[2]
-tab4 = _tabs[3] if _is_admin else None
+tab1, tab2, tab3, tab_gallery = _tabs[0], _tabs[1], _tabs[2], _tabs[3]
+tab4 = _tabs[4] if _is_admin else None
 
 # =============================================================================
 # Tab 1: Embed Watermark
@@ -663,6 +725,8 @@ with tab1:
                 'watermarked': watermarked,
                 'psnr': psnr,
                 'watermarked_bytes': wm_out_buffer.tobytes(),
+                'alpha': alpha_param,
+                'block_size': block_size if method == "DCT+Linear Modulation" else None,
                 **embed_extra
             }
             auth.log_activity(
@@ -734,6 +798,50 @@ with tab1:
             mime="image/png",
             key="download_watermarked_btn"
         )
+
+        # -----------------------------------------------------------------
+        # Submit to an Exhibition
+        # -----------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("📤 Submit to an Exhibition")
+        active_events = exhibitions.get_events(status="active")
+        if not active_events:
+            st.info("No active exhibitions right now. Check back once an admin creates one.")
+        else:
+            event_titles = {e["id"]: e["title"] for e in active_events}
+            chosen_event_id = st.selectbox(
+                "Choose an exhibition to submit this watermarked image to",
+                options=list(event_titles.keys()),
+                format_func=lambda eid: event_titles[eid],
+                key="submit_event_select",
+            )
+            st.caption(
+                "Your image will be reviewed by an admin, who verifies the watermark is "
+                "genuinely present before it's shown in the public gallery."
+            )
+            if st.button("📤 Submit for Review", key="submit_to_exhibition_btn"):
+                _, cover_buffer = cv2.imencode('.png', result['cover_img'])
+                _, wm_ref_buffer = cv2.imencode('.png', result['wm_img'])
+                ok, msg, submission_id = exhibitions.submit_to_event(
+                    event_id=chosen_event_id,
+                    username=st.session_state["username"],
+                    watermarked_bytes=result['watermarked_bytes'],
+                    method=result['method'],
+                    alpha=result['alpha'],
+                    block_size=result.get('block_size'),
+                    cover_bytes=cover_buffer.tobytes(),
+                    keys_bytes=result.get('keys_bytes'),
+                    wm_ref_bytes=wm_ref_buffer.tobytes(),
+                )
+                if ok:
+                    auth.log_activity(
+                        st.session_state["username"],
+                        "submit_to_exhibition",
+                        f"event={event_titles[chosen_event_id]}, method={result['method']}"
+                    )
+                    st.success(f"✅ {msg}")
+                else:
+                    st.error(f"❌ {msg}")
 
 # =============================================================================
 # Tab 2: Extract Watermark
@@ -1589,13 +1697,23 @@ with tab3:
                                     st.caption(f"PSNR: {psnr:.2f}dB")
 
 # =============================================================================
+# Tab: Gallery (approved exhibition submissions)
+# =============================================================================
+with tab_gallery:
+    st.header("🎨 Exhibition Gallery")
+    st.caption("This gallery is also viewable publicly without logging in.")
+    render_gallery_content(key_prefix="user_gallery")
+
+# =============================================================================
 # Tab 4: Admin Panel (admins only)
 # =============================================================================
 if _is_admin and tab4 is not None:
     with tab4:
         st.header("🛡️ Admin Panel")
 
-        admin_tab1, admin_tab2 = st.tabs(["👥 Manage Users", "📜 Activity Logs"])
+        admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(
+            ["👥 Manage Users", "📜 Activity Logs", "🎪 Events", "📋 Review Submissions"]
+        )
 
         # --- Manage Users -------------------------------------------------
         with admin_tab1:
@@ -1682,6 +1800,227 @@ if _is_admin and tab4 is not None:
                 )
             else:
                 st.info("No activity recorded yet.")
+
+        # --- Events ---------------------------------------------------------
+        with admin_tab3:
+            st.subheader("Existing Exhibitions")
+            all_events = exhibitions.get_events()
+            if all_events:
+                st.dataframe(
+                    [
+                        {
+                            "title": e["title"],
+                            "status": e["status"],
+                            "start_date": e.get("start_date"),
+                            "end_date": e.get("end_date"),
+                            "created_by": e.get("created_by"),
+                        }
+                        for e in all_events
+                    ],
+                    width="stretch",
+                    hide_index=True,
+                )
+            else:
+                st.info("No exhibitions created yet.")
+
+            st.markdown("---")
+            st.subheader("Create a New Exhibition")
+            with st.form("create_event_form"):
+                ev_title = st.text_input("Title", key="ev_title")
+                ev_desc = st.text_area("Description", key="ev_desc")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    ev_start = st.date_input("Start date", key="ev_start")
+                with col_b:
+                    ev_end = st.date_input("End date", key="ev_end")
+                if st.form_submit_button("🎪 Create Exhibition", type="primary"):
+                    ok, msg, event_id = exhibitions.create_event(
+                        ev_title, ev_desc, ev_start, ev_end, st.session_state["username"]
+                    )
+                    if ok:
+                        auth.log_activity(
+                            st.session_state["username"], "create_event", f"title={ev_title}"
+                        )
+                        st.success(f"✅ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+
+            if all_events:
+                st.markdown("---")
+                st.subheader("Manage an Exhibition")
+                ev_titles = {e["id"]: f"{e['title']} ({e['status']})" for e in all_events}
+                manage_id = st.selectbox(
+                    "Exhibition", options=list(ev_titles.keys()),
+                    format_func=lambda eid: ev_titles[eid], key="manage_event_select"
+                )
+                col_close, col_reopen, col_delete = st.columns(3)
+                with col_close:
+                    if st.button("⏸️ Close", key="close_event_btn"):
+                        exhibitions.close_event(manage_id)
+                        auth.log_activity(st.session_state["username"], "close_event", manage_id)
+                        st.rerun()
+                with col_reopen:
+                    if st.button("▶️ Reopen", key="reopen_event_btn"):
+                        exhibitions.reopen_event(manage_id)
+                        auth.log_activity(st.session_state["username"], "reopen_event", manage_id)
+                        st.rerun()
+                with col_delete:
+                    if st.button("🗑️ Delete", key="delete_event_btn", type="primary"):
+                        exhibitions.delete_event(manage_id)
+                        auth.log_activity(st.session_state["username"], "delete_event", manage_id)
+                        st.rerun()
+
+        # --- Review Submissions ---------------------------------------------
+        with admin_tab4:
+            st.subheader("Pending Submissions")
+
+            review_events = exhibitions.get_events()
+            if not review_events:
+                st.info("No exhibitions exist yet — create one in the Events tab first.")
+            else:
+                ev_titles2 = {e["id"]: e["title"] for e in review_events}
+                review_event_id = st.selectbox(
+                    "Exhibition", options=list(ev_titles2.keys()),
+                    format_func=lambda eid: ev_titles2[eid], key="review_event_select"
+                )
+                pending = exhibitions.get_submissions(event_id=review_event_id, status="pending")
+
+                if not pending:
+                    st.info("No pending submissions for this exhibition.")
+
+                for sub in pending:
+                    with st.container(border=True):
+                        col_img, col_info = st.columns([1, 2])
+                        with col_img:
+                            if sub.get("watermarked_url"):
+                                st.image(sub["watermarked_url"], use_container_width=True)
+                        with col_info:
+                            st.markdown(f"**Submitted by:** {sub.get('username')}")
+                            st.markdown(f"**Method:** {sub.get('method')}")
+                            st.caption(f"Submission ID: {sub['id']}")
+
+                            verify_key = f"verify_result_{sub['id']}"
+
+                            if st.button("🔬 Run Verification", key=f"verify_btn_{sub['id']}"):
+                                try:
+                                    wm_resp = requests.get(sub["watermarked_url"], timeout=20)
+                                    watermarked_arr = np.asarray(bytearray(wm_resp.content), dtype=np.uint8)
+                                    watermarked_img = cv2.imdecode(watermarked_arr, cv2.IMREAD_COLOR)
+
+                                    wmref_resp = requests.get(sub["wm_ref_url"], timeout=20)
+                                    wmref_arr = np.asarray(bytearray(wmref_resp.content), dtype=np.uint8)
+                                    wm_ref_img = cv2.imdecode(wmref_arr, cv2.IMREAD_GRAYSCALE)
+
+                                    method = sub["method"]
+                                    alpha = sub["alpha"]
+                                    extracted = None
+
+                                    if method == "DCT+DWT":
+                                        keys_resp = requests.get(sub["keys_url"], timeout=20)
+                                        keys_data = pickle.loads(keys_resp.content)
+                                        wmk = WatermarkerDCTDWT(alpha=alpha)
+                                        extracted = wmk.extract(
+                                            watermarked_img, keys_data["dct_map"], keys_data["shape"]
+                                        )
+                                    elif method == "Pure DWT":
+                                        cov_resp = requests.get(sub["cover_url"], timeout=20)
+                                        cov_arr = np.asarray(bytearray(cov_resp.content), dtype=np.uint8)
+                                        cover_img = cv2.imdecode(cov_arr, cv2.IMREAD_COLOR)
+                                        wmk = WatermarkerDWT(alpha=alpha)
+                                        extracted = wmk.extract(cover_img, watermarked_img)
+                                    elif method == "DWT+SVD":
+                                        cov_resp = requests.get(sub["cover_url"], timeout=20)
+                                        cov_arr = np.asarray(bytearray(cov_resp.content), dtype=np.uint8)
+                                        cover_img = cv2.imdecode(cov_arr, cv2.IMREAD_COLOR)
+                                        wmk = WatermarkerDWTSVD(alpha=alpha)
+                                        extracted = wmk.extract(watermarked_img, cover_img, wm_ref_img)
+                                    else:  # DCT+Linear Modulation
+                                        cov_resp = requests.get(sub["cover_url"], timeout=20)
+                                        cov_arr = np.asarray(bytearray(cov_resp.content), dtype=np.uint8)
+                                        cover_img = cv2.imdecode(cov_arr, cv2.IMREAD_COLOR)
+                                        cover_rgb = cv2.cvtColor(cover_img, cv2.COLOR_BGR2RGB)
+                                        wm_rgb = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
+                                        img_ycrcb = cv2.cvtColor(cover_rgb, cv2.COLOR_RGB2YCrCb)
+                                        Y = img_ycrcb[:, :, 0]
+                                        bsize = sub.get("block_size") or 8
+                                        num_blocks_h = Y.shape[0] // bsize
+                                        num_blocks_w = Y.shape[1] // bsize
+                                        total_bits = num_blocks_h * num_blocks_w
+                                        max_size = int(np.sqrt(total_bits))
+                                        wm_dims = (max_size, max_size)
+                                        num_bits = max_size * max_size
+                                        wmk = WatermarkerDCTLinear(alpha=alpha, block_size=bsize)
+                                        extracted = wmk.extract(cover_rgb, wm_rgb, wm_dims, num_bits)
+
+                                    nc = calculate_nc(wm_ref_img, extracted)
+                                    ber, _, _ = calculate_ber(wm_ref_img, extracted)
+
+                                    st.session_state[verify_key] = {
+                                        "extracted": extracted,
+                                        "wm_ref": wm_ref_img,
+                                        "nc": nc,
+                                        "ber": ber,
+                                        "error": None,
+                                    }
+                                except Exception as e:
+                                    st.session_state[verify_key] = {"error": str(e)}
+                                st.rerun()
+
+                            if verify_key in st.session_state:
+                                vr = st.session_state[verify_key]
+                                if vr.get("error"):
+                                    st.error(f"❌ Verification failed: {vr['error']}")
+                                else:
+                                    vcol1, vcol2 = st.columns(2)
+                                    with vcol1:
+                                        st.caption("Reference watermark")
+                                        st.image(vr["wm_ref"], clamp=True, use_container_width=True)
+                                    with vcol2:
+                                        st.caption("Extracted from submission")
+                                        st.image(vr["extracted"], clamp=True, use_container_width=True)
+                                    mcol1, mcol2 = st.columns(2)
+                                    with mcol1:
+                                        st.metric("Normalized Correlation (NC)", f"{vr['nc']:.4f}")
+                                    with mcol2:
+                                        st.metric("Bit Error Rate (BER)", f"{vr['ber']:.2f}%")
+                                    st.caption(
+                                        "Higher NC (closer to 1.0) and lower BER indicate the watermark "
+                                        "is genuinely present and intact."
+                                    )
+
+                                    acol1, acol2 = st.columns(2)
+                                    with acol1:
+                                        if st.button("✅ Approve", key=f"approve_btn_{sub['id']}", type="primary"):
+                                            exhibitions.review_submission(
+                                                sub["id"], approve=True,
+                                                reviewer=st.session_state["username"],
+                                                nc_score=float(vr["nc"]), ber_score=float(vr["ber"]),
+                                            )
+                                            auth.log_activity(
+                                                st.session_state["username"], "approve_submission",
+                                                f"submission={sub['id']}, nc={vr['nc']:.4f}"
+                                            )
+                                            del st.session_state[verify_key]
+                                            st.rerun()
+                                    with acol2:
+                                        if st.button("❌ Reject", key=f"reject_btn_{sub['id']}"):
+                                            exhibitions.review_submission(
+                                                sub["id"], approve=False,
+                                                reviewer=st.session_state["username"],
+                                                nc_score=float(vr["nc"]), ber_score=float(vr["ber"]),
+                                            )
+                                            auth.log_activity(
+                                                st.session_state["username"], "reject_submission",
+                                                f"submission={sub['id']}, nc={vr['nc']:.4f}"
+                                            )
+                                            del st.session_state[verify_key]
+                                            st.rerun()
+                            else:
+                                st.caption(
+                                    "⚠️ Run verification first to confirm the watermark is genuinely "
+                                    "present before approving or rejecting."
+                                )
 
 # Footer
 st.markdown("---")
