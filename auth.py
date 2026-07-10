@@ -1,94 +1,101 @@
 """
-Authentication & user-management module for the Digital Watermarking System.
+Firebase-backed authentication & user-management module for the Digital
+Watermarking System.
 
-Uses a local SQLite database (created automatically on first run) to store
-user accounts (username / salted-hashed password / role) and an activity
-log used by the admin panel.
+- Firebase Authentication (Email/Password) handles credential storage and
+  verification — Google manages the password hashing, not us.
+- Cloud Firestore stores each user's role ('user' / 'admin') and the
+  activity log used by the admin panel.
 
-NOTE on Streamlit Community Cloud: the filesystem is ephemeral — the
-database persists across reruns and user sessions while the app instance
-stays alive, but is wiped on redeploy / reboot / sleep-wake in some cases.
-For a class project this is normally fine. If you need accounts to survive
-redeploys, swap DB_PATH for a persistent store (e.g. a mounted volume or an
-external DB) later — the rest of the app doesn't need to change.
+Since Firebase Auth requires an email, usernames are mapped internally to
+a synthetic address "<username>@wm-app.local" — users never see this, they
+only ever type a username.
+
+REQUIRED Streamlit secrets (Settings -> Secrets on Streamlit Cloud, or
+.streamlit/secrets.toml locally):
+
+    [firebase]
+    api_key = "your-web-api-key"
+    default_admin_password = "SomeStrongPassword123!"   # optional, used once
+
+    [firebase_service_account]
+    type = "service_account"
+    project_id = "..."
+    private_key_id = "..."
+    private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+    client_email = "..."
+    client_id = "..."
+    auth_uri = "https://accounts.google.com/o/oauth2/auth"
+    token_uri = "https://oauth2.googleapis.com/token"
+    auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+    client_x509_cert_url = "..."
+
+(Copy these fields straight out of the service-account JSON you downloaded
+from Firebase; keep the \n's in private_key literal, in quotes, on one line.)
 """
 
-import sqlite3
-import hashlib
-import secrets
-import os
-from datetime import datetime
-from contextlib import contextmanager
+import requests
+import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, firestore, auth as fb_auth
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_data.db")
-
+FAKE_EMAIL_DOMAIN = "wm-app.local"
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin123"
+
+try:
+    DEFAULT_ADMIN_PASSWORD = st.secrets["firebase"].get(
+        "default_admin_password", "ChangeMe123!"
+    )
+except Exception:
+    DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
+
+_db = None
 
 
-@contextmanager
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+def _username_to_email(username):
+    return f"{username.strip().lower()}@{FAKE_EMAIL_DOMAIN}"
+
+
+def _init_firebase():
+    global _db
+    if _db is not None:
+        return
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(dict(st.secrets["firebase_service_account"]))
+        firebase_admin.initialize_app(cred)
+    _db = firestore.client()
+
+
+def _api_key():
+    return st.secrets["firebase"]["api_key"]
+
+
+def _find_uid(username):
+    docs = (
+        _db.collection("users")
+        .where("username", "==", username)
+        .limit(1)
+        .stream()
+    )
+    for d in docs:
+        return d.id
+    return None
+
+
+def _admin_count():
+    return sum(1 for _ in _db.collection("users").where("role", "==", "admin").stream())
 
 
 def init_db():
-    """Create tables if they don't exist yet, and seed a default admin account."""
-    with get_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                salt TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS activity_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                action TEXT NOT NULL,
-                details TEXT,
-                timestamp TEXT NOT NULL
-            )
-            """
-        )
-        admin_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE role = 'admin'"
-        ).fetchone()["c"]
-        if admin_count == 0:
-            _insert_user(conn, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, role="admin")
-
-
-def _hash_password(password, salt=None):
-    if salt is None:
-        salt = secrets.token_hex(16)
-    pw_hash = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
-    ).hex()
-    return pw_hash, salt
-
-
-def _insert_user(conn, username, password, role="user"):
-    pw_hash, salt = _hash_password(password)
-    conn.execute(
-        "INSERT INTO users (username, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?)",
-        (username, pw_hash, salt, role, datetime.now().isoformat(timespec="seconds")),
-    )
+    """Connect to Firebase and seed a default admin account if none exists."""
+    _init_firebase()
+    if _admin_count() == 0:
+        create_user(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, role="admin")
 
 
 def create_user(username, password, role="user"):
     """Self-service / admin account creation. Returns (ok: bool, message: str)."""
+    _init_firebase()
     username = (username or "").strip()
     if not username or not password:
         return False, "Username and password cannot be empty."
@@ -96,103 +103,139 @@ def create_user(username, password, role="user"):
         return False, "Username must be at least 3 characters."
     if len(password) < 6:
         return False, "Password must be at least 6 characters."
-    with get_conn() as conn:
-        existing = conn.execute(
-            "SELECT id FROM users WHERE username = ?", (username,)
-        ).fetchone()
-        if existing:
-            return False, "That username is already taken."
-        _insert_user(conn, username, password, role)
+
+    email = _username_to_email(username)
+    try:
+        user_record = fb_auth.create_user(
+            email=email, password=password, display_name=username
+        )
+    except fb_auth.EmailAlreadyExistsError:
+        return False, "That username is already taken."
+    except Exception as e:
+        return False, f"Could not create account ({e})."
+
+    _db.collection("users").document(user_record.uid).set(
+        {
+            "username": username,
+            "role": role,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
     return True, "Account created successfully."
 
 
 def verify_user(username, password):
-    """Returns {'username':..., 'role':...} on success, else None."""
+    """Verifies credentials against Firebase Auth. Returns {'username','role'} or None."""
+    _init_firebase()
     username = (username or "").strip()
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        ).fetchone()
-    if row is None:
+    if not username or not password:
         return None
-    pw_hash, _ = _hash_password(password, row["salt"])
-    if secrets.compare_digest(pw_hash, row["password_hash"]):
-        return {"username": row["username"], "role": row["role"]}
-    return None
+    email = _username_to_email(username)
+    url = (
+        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
+        f"?key={_api_key()}"
+    )
+    try:
+        resp = requests.post(
+            url,
+            json={"email": email, "password": password, "returnSecureToken": True},
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None
+    if resp.status_code != 200:
+        return None
+
+    uid = resp.json()["localId"]
+    doc = _db.collection("users").document(uid).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    return {"username": data.get("username", username), "role": data.get("role", "user")}
 
 
 def get_all_users():
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT username, role, created_at FROM users ORDER BY created_at"
-        ).fetchall()
-    return [dict(r) for r in rows]
+    _init_firebase()
+    users = []
+    for d in _db.collection("users").stream():
+        data = d.to_dict()
+        created = data.get("created_at")
+        users.append(
+            {
+                "username": data.get("username"),
+                "role": data.get("role"),
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created),
+            }
+        )
+    return sorted(users, key=lambda u: u["username"] or "")
 
 
 def delete_user(username):
     """Returns (ok: bool, message: str). Refuses to delete the last admin."""
-    with get_conn() as conn:
-        target = conn.execute(
-            "SELECT role FROM users WHERE username = ?", (username,)
-        ).fetchone()
-        if target is None:
-            return False, "User not found."
-        if target["role"] == "admin":
-            admin_count = conn.execute(
-                "SELECT COUNT(*) AS c FROM users WHERE role = 'admin'"
-            ).fetchone()["c"]
-            if admin_count <= 1:
-                return False, "Cannot delete the last remaining admin account."
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+    _init_firebase()
+    uid = _find_uid(username)
+    if not uid:
+        return False, "User not found."
+    data = _db.collection("users").document(uid).get().to_dict() or {}
+    if data.get("role") == "admin" and _admin_count() <= 1:
+        return False, "Cannot delete the last remaining admin account."
+    fb_auth.delete_user(uid)
+    _db.collection("users").document(uid).delete()
     return True, f"User '{username}' deleted."
 
 
 def reset_password(username, new_password):
+    _init_firebase()
     if len(new_password or "") < 6:
         return False, "Password must be at least 6 characters."
-    pw_hash, salt = _hash_password(new_password)
-    with get_conn() as conn:
-        result = conn.execute(
-            "UPDATE users SET password_hash = ?, salt = ? WHERE username = ?",
-            (pw_hash, salt, username),
-        )
-        if result.rowcount == 0:
-            return False, "User not found."
+    uid = _find_uid(username)
+    if not uid:
+        return False, "User not found."
+    fb_auth.update_user(uid, password=new_password)
     return True, "Password updated."
 
 
 def set_role(username, role):
-    with get_conn() as conn:
-        if role != "admin":
-            admin_count = conn.execute(
-                "SELECT COUNT(*) AS c FROM users WHERE role = 'admin'"
-            ).fetchone()["c"]
-            target = conn.execute(
-                "SELECT role FROM users WHERE username = ?", (username,)
-            ).fetchone()
-            if target and target["role"] == "admin" and admin_count <= 1:
-                return False, "Cannot demote the last remaining admin account."
-        conn.execute("UPDATE users SET role = ? WHERE username = ?", (role, username))
+    _init_firebase()
+    uid = _find_uid(username)
+    if not uid:
+        return False, "User not found."
+    data = _db.collection("users").document(uid).get().to_dict() or {}
+    if role != "admin" and data.get("role") == "admin" and _admin_count() <= 1:
+        return False, "Cannot demote the last remaining admin account."
+    _db.collection("users").document(uid).update({"role": role})
     return True, "Role updated."
 
 
 def log_activity(username, action, details=""):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO activity_log (username, action, details, timestamp) VALUES (?, ?, ?, ?)",
-            (username, action, details, datetime.now().isoformat(timespec="seconds")),
-        )
+    _init_firebase()
+    _db.collection("activity_log").add(
+        {
+            "username": username,
+            "action": action,
+            "details": details,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+        }
+    )
 
 
 def get_logs(limit=300, username_filter=None):
-    with get_conn() as conn:
-        if username_filter:
-            rows = conn.execute(
-                "SELECT * FROM activity_log WHERE username = ? ORDER BY id DESC LIMIT ?",
-                (username_filter, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM activity_log ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-    return [dict(r) for r in rows]
+    _init_firebase()
+    query = _db.collection("activity_log")
+    if username_filter:
+        query = query.where("username", "==", username_filter)
+    query = query.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(limit)
+
+    logs = []
+    for d in query.stream():
+        data = d.to_dict()
+        ts = data.get("timestamp")
+        logs.append(
+            {
+                "username": data.get("username"),
+                "action": data.get("action"),
+                "details": data.get("details"),
+                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            }
+        )
+    return logs
