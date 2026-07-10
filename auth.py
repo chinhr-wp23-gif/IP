@@ -38,6 +38,7 @@ import requests
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as fb_auth
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 FAKE_EMAIL_DOMAIN = "wm-app.local"
 DEFAULT_ADMIN_USERNAME = "admin"
@@ -73,7 +74,7 @@ def _api_key():
 def _find_uid(username):
     docs = (
         _db.collection("users")
-        .where("username", "==", username)
+        .where(filter=FieldFilter("username", "==", username))
         .limit(1)
         .stream()
     )
@@ -83,7 +84,9 @@ def _find_uid(username):
 
 
 def _admin_count():
-    return sum(1 for _ in _db.collection("users").where("role", "==", "admin").stream())
+    return sum(
+        1 for _ in _db.collection("users").where(filter=FieldFilter("role", "==", "admin")).stream()
+    )
 
 
 def get_db():
@@ -230,7 +233,7 @@ def get_logs(limit=300, username_filter=None):
     _init_firebase()
     query = _db.collection("activity_log")
     if username_filter:
-        query = query.where("username", "==", username_filter)
+        query = query.where(filter=FieldFilter("username", "==", username_filter))
     query = query.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(limit)
 
     logs = []
