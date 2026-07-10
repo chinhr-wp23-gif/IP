@@ -731,9 +731,27 @@ class WatermarkerDCTLinear:
 
 # Sidebar
 with st.sidebar:
-    st.markdown(f"👤 Logged in as **{st.session_state['username']}** ({st.session_state['role']})")
+    # --- Account zone -------------------------------------------------------
+    st.markdown(
+        f"""
+        <div style="background-color:#1A2229; border:1px solid #2A343C; border-radius:10px;
+                    padding:0.9rem 1rem; margin-bottom:0.6rem;">
+            <div style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; letter-spacing:0.1em;
+                        text-transform:uppercase; color:#8A98A3; margin-bottom:0.3rem;">
+                Account
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif; font-size:1.15rem; font-weight:600; color:#E8EDF0;">
+                👤 {st.session_state['username']}
+            </div>
+            <div style="color:#4DD9C4; font-size:0.78rem; font-family:'JetBrains Mono',monospace; margin-top:0.15rem;">
+                {st.session_state['role'].upper()}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if st.button("🚪 Log Out"):
+    if st.button("🚪 Log Out", use_container_width=True):
         auth.log_activity(st.session_state["username"], "logout")
         for key in ("authenticated", "username", "role"):
             st.session_state.pop(key, None)
@@ -757,15 +775,23 @@ with st.sidebar:
                     else:
                         st.error(f"❌ {msg}")
 
-    st.markdown("---")
-    st.header("⚙️ Settings")
-    
+    st.markdown("<div style='height:1.25rem'></div>", unsafe_allow_html=True)
+
+    # --- Watermark settings zone ---------------------------------------------
+    st.markdown(
+        """
+        <div style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; letter-spacing:0.1em;
+                    text-transform:uppercase; color:#8A98A3; margin-bottom:0.5rem;">
+            ⚙️ Watermark Settings
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     method = st.selectbox(
         "Watermarking Method",
         ["DCT+DWT", "Pure DWT", "DWT+SVD", "DCT+Linear Modulation"]
     )
-    
-    st.markdown("---")
     
     if method == "DCT+DWT":
         alpha_param = st.slider("Alpha (Embedding Strength)", 10.0, 100.0, 50.0, 5.0)
@@ -782,13 +808,13 @@ with st.sidebar:
         st.info("📷 Non-blind: Requires original image for extraction")
 
 # Main tabs
-_tab_labels = ["📝 Embed Watermark", "🔍 Extract Watermark", "⚔️ Attack Testing", "🎨 Gallery"]
+_tab_labels = ["🎨 Gallery", "📝 Embed Watermark", "🔍 Extract Watermark", "⚔️ Attack Testing"]
 _is_admin = st.session_state.get("role") == "admin"
 if _is_admin:
     _tab_labels.append("🛡️ Admin Panel")
 
 _tabs = st.tabs(_tab_labels)
-tab1, tab2, tab3, tab_gallery = _tabs[0], _tabs[1], _tabs[2], _tabs[3]
+tab_gallery, tab1, tab2, tab3 = _tabs[0], _tabs[1], _tabs[2], _tabs[3]
 tab4 = _tabs[4] if _is_admin else None
 
 # =============================================================================
@@ -961,10 +987,26 @@ with tab1:
         )
 
         # -----------------------------------------------------------------
-        # Submit to an Exhibition
+        # Submit to an Exhibition — highlighted as the next-step moment
         # -----------------------------------------------------------------
-        st.markdown("---")
-        st.subheader("📤 Submit to an Exhibition")
+        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div style="border:1px solid #4DD9C4; border-radius:10px; padding:1rem 1.25rem;
+                        background-color:rgba(77,217,196,0.06);">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; letter-spacing:0.1em;
+                            text-transform:uppercase; color:#4DD9C4; margin-bottom:0.3rem;">
+                    Next step
+                </div>
+                <div style="font-family:'Space Grotesk',sans-serif; font-size:1.2rem; font-weight:600; color:#E8EDF0;">
+                    📤 Submit to an Exhibition
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+
         active_events = exhibitions.get_events(status="active")
         if not active_events:
             st.info("No active exhibitions right now. Check back once an admin creates one.")
@@ -980,7 +1022,7 @@ with tab1:
                 "Your image will be reviewed by an admin, who verifies the watermark is "
                 "genuinely present before it's shown in the public gallery."
             )
-            if st.button("📤 Submit for Review", key="submit_to_exhibition_btn"):
+            if st.button("📤 Submit for Review", key="submit_to_exhibition_btn", type="primary"):
                 _, cover_buffer = cv2.imencode('.png', result['cover_img'])
                 _, wm_ref_buffer = cv2.imencode('.png', result['wm_img'])
                 ok, msg, submission_id = exhibitions.submit_to_event(
@@ -1872,12 +1914,16 @@ if _is_admin and tab4 is not None:
     with tab4:
         st.header("🛡️ Admin Panel")
 
-        admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(
-            ["👥 Manage Users", "📜 Activity Logs", "🎪 Events", "📋 Review Submissions"]
+        admin_section = st.radio(
+            "Admin section",
+            ["👥 Manage Users", "📜 Activity Logs", "🎪 Events", "📋 Review Submissions"],
+            horizontal=True,
+            label_visibility="collapsed",
         )
+        st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
 
         # --- Manage Users -------------------------------------------------
-        with admin_tab1:
+        if admin_section == "👥 Manage Users":
             st.subheader("Existing Users")
             users = auth.get_all_users()
             if users:
@@ -1942,7 +1988,7 @@ if _is_admin and tab4 is not None:
                             st.error(f"❌ {msg}")
 
         # --- Activity Logs --------------------------------------------------
-        with admin_tab2:
+        elif admin_section == "📜 Activity Logs":
             st.subheader("Recent Activity")
             filter_user = st.selectbox(
                 "Filter by user (optional)",
@@ -1963,7 +2009,7 @@ if _is_admin and tab4 is not None:
                 st.info("No activity recorded yet.")
 
         # --- Events ---------------------------------------------------------
-        with admin_tab3:
+        elif admin_section == "🎪 Events":
             st.subheader("Existing Exhibitions")
             all_events = exhibitions.get_events()
             if all_events:
@@ -2033,7 +2079,7 @@ if _is_admin and tab4 is not None:
                         st.rerun()
 
         # --- Review Submissions ---------------------------------------------
-        with admin_tab4:
+        elif admin_section == "📋 Review Submissions":
             st.subheader("Pending Submissions")
 
             review_events = exhibitions.get_events()
