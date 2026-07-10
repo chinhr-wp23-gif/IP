@@ -22,6 +22,119 @@ st.set_page_config(
 auth.init_db()
 
 # =============================================================================
+# Custom Theme — "Forensic Gallery"
+# =============================================================================
+def inject_custom_theme():
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+        :root {
+            --bg: #0F1417;
+            --surface: #1A2229;
+            --border: #2A343C;
+            --text: #E8EDF0;
+            --muted: #8A98A3;
+            --accent: #4DD9C4;
+            --accent-warm: #E8875A;
+        }
+
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
+        }
+
+        h1, h2, h3, h4 {
+            font-family: 'Space Grotesk', sans-serif !important;
+            letter-spacing: -0.01em;
+        }
+
+        code, .stCaption, [data-testid="stCaptionContainer"] {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Metrics rendered like instrument readings */
+        [data-testid="stMetricValue"] {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+        }
+        [data-testid="stMetricLabel"] {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        /* Sidebar as a control panel */
+        [data-testid="stSidebar"] {
+            background-color: var(--surface);
+            border-right: 1px solid var(--border);
+        }
+
+        /* Buttons */
+        .stButton>button {
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            transition: all 0.15s ease;
+            font-weight: 500;
+        }
+        .stButton>button:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .stButton>button[kind="primary"] {
+            background-color: var(--accent);
+            border-color: var(--accent);
+            color: #0F1417;
+            font-weight: 600;
+        }
+        .stButton>button[kind="primary"]:hover {
+            background-color: #3fc4b0;
+            color: #0F1417;
+        }
+
+        /* Tabs with accent underline */
+        .stTabs [data-baseweb="tab"] {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        .stTabs [aria-selected="true"] {
+            color: var(--accent) !important;
+        }
+        .stTabs [data-baseweb="tab-highlight"] {
+            background-color: var(--accent) !important;
+        }
+
+        /* Bordered containers act as cards */
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 10px !important;
+            border-color: var(--border) !important;
+        }
+
+        /* Signature moment: images get a "detection glow" on hover */
+        [data-testid="stImage"] img {
+            border-radius: 8px;
+            transition: transform 0.25s ease, box-shadow 0.25s ease;
+        }
+        [data-testid="stImage"]:hover img {
+            transform: scale(1.015);
+            box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(77, 217, 196, 0.18);
+        }
+
+        /* Dataframes / tables */
+        [data-testid="stDataFrame"] {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+inject_custom_theme()
+
+# =============================================================================
 # Public Gallery (viewable without logging in)
 # =============================================================================
 def render_gallery_content(key_prefix="gallery"):
@@ -60,8 +173,24 @@ def render_gallery_content(key_prefix="gallery"):
 
 
 def render_public_gallery():
-    st.title("🎨 Exhibition Gallery")
-    st.markdown("### Watermark-verified images approved for public display")
+    st.markdown(
+        """
+        <div style="padding: 0.5rem 0 1rem 0;">
+            <div style="font-family:'JetBrains Mono',monospace; color:#4DD9C4; font-size:0.75rem;
+                        letter-spacing:0.15em; text-transform:uppercase; margin-bottom:0.4rem;">
+                Public Exhibition
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif; font-size:2rem; font-weight:700;
+                        color:#E8EDF0; line-height:1.1;">
+                Exhibition Gallery
+            </div>
+            <div style="color:#8A98A3; font-size:0.95rem; margin-top:0.2rem;">
+                Watermark-verified images approved for public display
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if st.button("← Back to Log In"):
         st.session_state["view_mode"] = None
@@ -79,8 +208,24 @@ if st.session_state.get("view_mode") == "public_gallery":
 # Authentication Gate
 # =============================================================================
 def render_login_page():
-    st.title("🔐 Digital Watermarking System")
-    st.markdown("### Please log in to continue")
+    st.markdown(
+        """
+        <div style="padding: 1.5rem 0 0.5rem 0;">
+            <div style="font-family:'JetBrains Mono',monospace; color:#4DD9C4; font-size:0.8rem;
+                        letter-spacing:0.15em; text-transform:uppercase; margin-bottom:0.6rem;">
+                DCT &middot; DWT &middot; SVD &mdash; Invisible Watermarking
+            </div>
+            <div style="font-family:'Space Grotesk',sans-serif; font-size:2.6rem; font-weight:700;
+                        color:#E8EDF0; line-height:1.1; margin-bottom:0.3rem;">
+                See what's hidden.<br/>Prove what's yours.
+            </div>
+            <div style="color:#8A98A3; font-size:1rem; margin-bottom:1.5rem;">
+                Sign in to embed, extract, and exhibit watermark-verified images.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     login_tab, signup_tab = st.tabs(["Log In", "Sign Up"])
 
@@ -133,8 +278,24 @@ if not st.session_state.get("authenticated"):
     st.stop()
 
 # Title and description
-st.title("🔐 Digital Watermarking System")
-st.markdown("### Advanced Image Watermarking with Multiple Transform Techniques")
+st.markdown(
+    """
+    <div style="padding: 0.5rem 0 1rem 0;">
+        <div style="font-family:'JetBrains Mono',monospace; color:#4DD9C4; font-size:0.75rem;
+                    letter-spacing:0.15em; text-transform:uppercase; margin-bottom:0.4rem;">
+            DCT &middot; DWT &middot; SVD
+        </div>
+        <div style="font-family:'Space Grotesk',sans-serif; font-size:2rem; font-weight:700;
+                    color:#E8EDF0; line-height:1.1;">
+            Digital Watermarking System
+        </div>
+        <div style="color:#8A98A3; font-size:0.95rem; margin-top:0.2rem;">
+            Advanced image watermarking with multiple transform techniques
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Utility Functions
 def calculate_psnr(img1, img2):
