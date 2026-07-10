@@ -86,6 +86,13 @@ def _admin_count():
     return sum(1 for _ in _db.collection("users").where("role", "==", "admin").stream())
 
 
+def get_db():
+    """Shared Firestore client, for other modules (exhibitions.py, etc.) to reuse
+    the same Firebase connection instead of initializing their own."""
+    _init_firebase()
+    return _db
+
+
 def init_db():
     """Connect to Firebase and seed a default admin account if none exists."""
     _init_firebase()
