@@ -11,6 +11,7 @@ Firestore collections:
 
 import uuid
 from firebase_admin import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 import auth
 import storage
@@ -44,7 +45,7 @@ def create_event(title, description, start_date, end_date, created_by):
 def get_events(status=None):
     q = _db().collection("events")
     if status:
-        q = q.where("status", "==", status)
+        q = q.where(filter=FieldFilter("status", "==", status))
     events = []
     for d in q.stream():
         data = d.to_dict()
@@ -139,11 +140,11 @@ def submit_to_event(
 def get_submissions(event_id=None, status=None, username=None):
     q = _db().collection("submissions")
     if event_id:
-        q = q.where("event_id", "==", event_id)
+        q = q.where(filter=FieldFilter("event_id", "==", event_id))
     if status:
-        q = q.where("status", "==", status)
+        q = q.where(filter=FieldFilter("status", "==", status))
     if username:
-        q = q.where("username", "==", username)
+        q = q.where(filter=FieldFilter("username", "==", username))
     subs = []
     for d in q.stream():
         data = d.to_dict()
