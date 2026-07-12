@@ -262,11 +262,6 @@ def render_login_page():
                     else:
                         st.error(f"❌ {msg}")
 
-    st.info(
-        f"🛠️ Default admin login: **{auth.DEFAULT_ADMIN_USERNAME} / {auth.DEFAULT_ADMIN_PASSWORD}** "
-        "— please change this password after your first login (sidebar → Change my password)."
-    )
-
     st.markdown("---")
     if st.button("🎨 Browse Public Exhibition Gallery (no account needed)"):
         st.session_state["view_mode"] = "public_gallery"
