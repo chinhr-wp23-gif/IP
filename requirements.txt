@@ -1,6 +1,6 @@
-streamlit>=1.38
-opencv-python-headless>=4.9
-numpy>=1.26
+streamlit>=1.38,<2
+opencv-python-headless>=4.9,<5
+numpy>=1.26,<2.3
 PyWavelets>=1.5
 Pillow>=10.0
 firebase-admin>=6.5
