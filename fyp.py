@@ -293,6 +293,25 @@ st.markdown(
 )
 
 # Utility Functions
+def _resize_if_large(img, max_dim=1600):
+    """Downscale an image if its longest side exceeds max_dim.
+    Large uploads (e.g. modern phone photos, 12MP+) can push memory usage
+    on constrained hosting (Streamlit Community Cloud's free tier) high
+    enough to crash the process. Capping resolution keeps embed/extract/
+    attack-testing memory usage predictable regardless of what a user
+    uploads, while still being far more resolution than needed to
+    demonstrate watermark quality."""
+    if img is None:
+        return img
+    h, w = img.shape[:2]
+    longest = max(h, w)
+    if longest > max_dim:
+        scale = max_dim / longest
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return img
+
+
 def calculate_psnr(img1, img2):
     if len(img1.shape) == 3:
         img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
@@ -842,7 +861,7 @@ with tab1:
         if cover_file is not None:
             # Load cover image
             cover_bytes = np.asarray(bytearray(cover_file.read()), dtype=np.uint8)
-            cover_img = cv2.imdecode(cover_bytes, cv2.IMREAD_COLOR)
+            cover_img = _resize_if_large(cv2.imdecode(cover_bytes, cv2.IMREAD_COLOR))
             
             embed_extra = {}
             
@@ -886,7 +905,7 @@ with tab1:
                     wm_img = temp_wm
                 else:
                     wm_bytes = np.asarray(bytearray(watermark_file.read()), dtype=np.uint8)
-                    wm_img = cv2.imdecode(wm_bytes, cv2.IMREAD_GRAYSCALE)
+                    wm_img = _resize_if_large(cv2.imdecode(wm_bytes, cv2.IMREAD_GRAYSCALE))
                 
                 cover_rgb = cv2.cvtColor(cover_img, cv2.COLOR_BGR2RGB)
                 watermarked, wm_resized, wm_dims, num_bits = wm.embed(cover_rgb, wm_img)
@@ -1083,9 +1102,9 @@ with tab2:
         if watermarked_file is not None:
             # Load watermarked image
             wm_bytes = np.asarray(bytearray(watermarked_file.read()), dtype=np.uint8)
-            watermarked_img = cv2.imdecode(wm_bytes, cv2.IMREAD_COLOR)
+            watermarked_img = _resize_if_large(cv2.imdecode(wm_bytes, cv2.IMREAD_COLOR))
             if watermarked_img is None:
-                watermarked_img = cv2.imdecode(wm_bytes, cv2.IMREAD_GRAYSCALE)
+                watermarked_img = _resize_if_large(cv2.imdecode(wm_bytes, cv2.IMREAD_GRAYSCALE))
             
             extracted = None
             
@@ -1107,7 +1126,7 @@ with tab2:
                         st.error("❌ Please upload the original cover image!")
                     else:
                         orig_bytes = np.asarray(bytearray(original_file.read()), dtype=np.uint8)
-                        original_img = cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR)
+                        original_img = _resize_if_large(cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR))
                         
                         wm = WatermarkerDWT(alpha=alpha_param)
                         extracted = wm.extract(original_img, watermarked_img)
@@ -1117,10 +1136,10 @@ with tab2:
                         st.error("❌ Please upload both original cover image and watermark reference!")
                     else:
                         orig_bytes = np.asarray(bytearray(original_file.read()), dtype=np.uint8)
-                        original_img = cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR)
+                        original_img = _resize_if_large(cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR))
                         
                         ref_wm_bytes = np.asarray(bytearray(ref_wm_file.read()), dtype=np.uint8)
-                        ref_watermark = cv2.imdecode(ref_wm_bytes, cv2.IMREAD_GRAYSCALE)
+                        ref_watermark = _resize_if_large(cv2.imdecode(ref_wm_bytes, cv2.IMREAD_GRAYSCALE))
                         
                         wm = WatermarkerDWTSVD(alpha=alpha_param)
                         extracted = wm.extract(watermarked_img, original_img, ref_watermark)
@@ -1133,7 +1152,7 @@ with tab2:
                         st.error("❌ Please upload the original cover image!")
                     else:
                         orig_bytes = np.asarray(bytearray(original_file.read()), dtype=np.uint8)
-                        original_img = cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR)
+                        original_img = _resize_if_large(cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR))
                         
                         # Need to get watermark dimensions - ask user or use default
                         st.warning("⚠️ For DCT+Linear Modulation, watermark dimensions are needed. Using auto-calculated size.")
@@ -1272,7 +1291,7 @@ with tab3:
     def apply_jpeg_compression(image, quality):
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
         _, encoded = cv2.imencode('.jpg', image, encode_param)
-        return cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        return _resize_if_large(cv2.imdecode(encoded, cv2.IMREAD_COLOR))
     
     def apply_salt_pepper_noise(image, density):
         noisy = image.copy()
@@ -1337,7 +1356,7 @@ with tab3:
             _, encoded = cv2.imencode('.webp', image, [cv2.IMWRITE_WEBP_QUALITY, 90])
         else:
             _, encoded = cv2.imencode('.png', image)
-        return cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        return _resize_if_large(cv2.imdecode(encoded, cv2.IMREAD_COLOR))
     
     if st.button("🚀 Run Attack Tests", type="primary"):
         if attack_wm_file is None:
@@ -1350,9 +1369,9 @@ with tab3:
             )
             # Load watermarked image
             wm_bytes = np.asarray(bytearray(attack_wm_file.read()), dtype=np.uint8)
-            watermarked_img = cv2.imdecode(wm_bytes, cv2.IMREAD_COLOR)
+            watermarked_img = _resize_if_large(cv2.imdecode(wm_bytes, cv2.IMREAD_COLOR))
             if watermarked_img is None:
-                watermarked_img = cv2.imdecode(wm_bytes, cv2.IMREAD_GRAYSCALE)
+                watermarked_img = _resize_if_large(cv2.imdecode(wm_bytes, cv2.IMREAD_GRAYSCALE))
             
             # Load required files for extraction
             extraction_ready = False
@@ -1372,7 +1391,7 @@ with tab3:
                     st.error("❌ Please upload the original cover image!")
                 else:
                     orig_bytes = np.asarray(bytearray(attack_original_file.read()), dtype=np.uint8)
-                    original_img = cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR)
+                    original_img = _resize_if_large(cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR))
                     extraction_ready = True
                     
             elif method == "DWT+SVD":
@@ -1380,9 +1399,9 @@ with tab3:
                     st.error("❌ Please upload both original cover and watermark reference!")
                 else:
                     orig_bytes = np.asarray(bytearray(attack_original_file.read()), dtype=np.uint8)
-                    original_img = cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR)
+                    original_img = _resize_if_large(cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR))
                     ref_wm_bytes = np.asarray(bytearray(attack_ref_wm_file.read()), dtype=np.uint8)
-                    ref_watermark = cv2.imdecode(ref_wm_bytes, cv2.IMREAD_GRAYSCALE)
+                    ref_watermark = _resize_if_large(cv2.imdecode(ref_wm_bytes, cv2.IMREAD_GRAYSCALE))
                     extraction_ready = True
                     
             else:  # DCT+Linear Modulation
@@ -1390,7 +1409,7 @@ with tab3:
                     st.error("❌ Please upload the original cover image!")
                 else:
                     orig_bytes = np.asarray(bytearray(attack_original_file.read()), dtype=np.uint8)
-                    original_img = cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR)
+                    original_img = _resize_if_large(cv2.imdecode(orig_bytes, cv2.IMREAD_COLOR))
                     extraction_ready = True
             
             if extraction_ready:
@@ -2108,11 +2127,11 @@ if _is_admin and tab4 is not None:
                                 try:
                                     wm_resp = requests.get(sub["watermarked_url"], timeout=20)
                                     watermarked_arr = np.asarray(bytearray(wm_resp.content), dtype=np.uint8)
-                                    watermarked_img = cv2.imdecode(watermarked_arr, cv2.IMREAD_COLOR)
+                                    watermarked_img = _resize_if_large(cv2.imdecode(watermarked_arr, cv2.IMREAD_COLOR))
 
                                     wmref_resp = requests.get(sub["wm_ref_url"], timeout=20)
                                     wmref_arr = np.asarray(bytearray(wmref_resp.content), dtype=np.uint8)
-                                    wm_ref_img = cv2.imdecode(wmref_arr, cv2.IMREAD_GRAYSCALE)
+                                    wm_ref_img = _resize_if_large(cv2.imdecode(wmref_arr, cv2.IMREAD_GRAYSCALE))
 
                                     method = sub["method"]
                                     alpha = sub["alpha"]
@@ -2128,19 +2147,19 @@ if _is_admin and tab4 is not None:
                                     elif method == "Pure DWT":
                                         cov_resp = requests.get(sub["cover_url"], timeout=20)
                                         cov_arr = np.asarray(bytearray(cov_resp.content), dtype=np.uint8)
-                                        cover_img = cv2.imdecode(cov_arr, cv2.IMREAD_COLOR)
+                                        cover_img = _resize_if_large(cv2.imdecode(cov_arr, cv2.IMREAD_COLOR))
                                         wmk = WatermarkerDWT(alpha=alpha)
                                         extracted = wmk.extract(cover_img, watermarked_img)
                                     elif method == "DWT+SVD":
                                         cov_resp = requests.get(sub["cover_url"], timeout=20)
                                         cov_arr = np.asarray(bytearray(cov_resp.content), dtype=np.uint8)
-                                        cover_img = cv2.imdecode(cov_arr, cv2.IMREAD_COLOR)
+                                        cover_img = _resize_if_large(cv2.imdecode(cov_arr, cv2.IMREAD_COLOR))
                                         wmk = WatermarkerDWTSVD(alpha=alpha)
                                         extracted = wmk.extract(watermarked_img, cover_img, wm_ref_img)
                                     else:  # DCT+Linear Modulation
                                         cov_resp = requests.get(sub["cover_url"], timeout=20)
                                         cov_arr = np.asarray(bytearray(cov_resp.content), dtype=np.uint8)
-                                        cover_img = cv2.imdecode(cov_arr, cv2.IMREAD_COLOR)
+                                        cover_img = _resize_if_large(cv2.imdecode(cov_arr, cv2.IMREAD_COLOR))
                                         cover_rgb = cv2.cvtColor(cover_img, cv2.COLOR_BGR2RGB)
                                         wm_rgb = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
                                         img_ycrcb = cv2.cvtColor(cover_rgb, cv2.COLOR_RGB2YCrCb)
