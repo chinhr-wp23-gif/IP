@@ -312,6 +312,33 @@ def _resize_if_large(img, max_dim=1600):
     return img
 
 
+def render_table(rows, columns=None):
+    """Renders a list of dicts as a table using plain Markdown -- no pandas/
+    pyarrow involved. st.dataframe()/st.table() route through pyarrow to
+    serialize data to the frontend, which can segfault if the pyarrow build
+    resolved by pip isn't ABI-compatible with whatever numpy version got
+    installed alongside it. Markdown tables render client-side with zero
+    native-code dependency, so this sidesteps that failure mode entirely.
+    """
+    if not rows:
+        st.info("No data to display.")
+        return
+
+    cols = columns or list(rows[0].keys())
+
+    def _cell(value):
+        text = "" if value is None else str(value)
+        return text.replace("|", "\\|").replace("\n", " ")
+
+    header = "| " + " | ".join(cols) + " |"
+    separator = "| " + " | ".join(["---"] * len(cols)) + " |"
+    body_lines = [
+        "| " + " | ".join(_cell(row.get(c)) for c in cols) + " |"
+        for row in rows
+    ]
+    st.markdown("\n".join([header, separator] + body_lines))
+
+
 def calculate_psnr(img1, img2):
     if len(img1.shape) == 3:
         img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
@@ -1941,7 +1968,7 @@ if _is_admin and tab4 is not None:
             st.subheader("Existing Users")
             users = auth.get_all_users()
             if users:
-                st.dataframe(users, width="stretch", hide_index=True)
+                render_table(users, columns=["username", "role", "created_at"])
             else:
                 st.info("No users found.")
 
@@ -2014,10 +2041,9 @@ if _is_admin and tab4 is not None:
                 username_filter=None if filter_user == "All users" else filter_user
             )
             if logs:
-                st.dataframe(
+                render_table(
                     [{k: v for k, v in row.items() if k != "id"} for row in logs],
-                    width="stretch",
-                    hide_index=True
+                    columns=["username", "action", "details", "timestamp"]
                 )
             else:
                 st.info("No activity recorded yet.")
@@ -2027,7 +2053,7 @@ if _is_admin and tab4 is not None:
             st.subheader("Existing Exhibitions")
             all_events = exhibitions.get_events()
             if all_events:
-                st.dataframe(
+                render_table(
                     [
                         {
                             "title": e["title"],
@@ -2038,8 +2064,7 @@ if _is_admin and tab4 is not None:
                         }
                         for e in all_events
                     ],
-                    width="stretch",
-                    hide_index=True,
+                    columns=["title", "status", "start_date", "end_date", "created_by"]
                 )
             else:
                 st.info("No exhibitions created yet.")
