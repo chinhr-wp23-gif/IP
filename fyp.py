@@ -515,7 +515,7 @@ class WatermarkerDWTSVD:
         self.alpha = alpha
 
     def text_to_image(self, text, width=200, height=50):
-        text1 = "Hospital: " + text
+        text1 = "Watermark: " + text
         text2 = "DateTime: " + datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5
